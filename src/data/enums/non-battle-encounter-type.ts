@@ -1,5 +1,7 @@
 
 export enum NonBattleEncounterType{
 AMBUSH_NATURE_CHANGE,
+RIVER_RELEASE,
+SNORLAX_SLEEP_FIGHT,
 
 }

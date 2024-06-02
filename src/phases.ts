@@ -63,6 +63,7 @@ import { TextStyle, addTextObject } from "./ui/text";
 import { Type } from "./data/type";
 import { MoveUsedEvent, TurnEndEvent, TurnInitEvent } from "./battle-scene-events";
 import Trainer, { TrainerVariant } from "./field/trainer";
+import {NonBattleEncounterNarrative} from "./data/non-battle-encounter-narrative";
 
 export class LoginPhase extends Phase {
   private showText: boolean;
@@ -3945,9 +3946,21 @@ export class NewNonBattleEncounterPhase extends BattlePhase {
   start() {
 
     super.start();
-    //const fadeDuration = 500;
+
+    const storyTeller = new NonBattleEncounterNarrative(this.scene);
+
+
+    //    const fadeDuration = 500;
     console.log(getBiomeKey(this.scene.arena.biomeType));
     this.scene.playBgm(getBiomeKey(this.scene.arena.biomeType));
+
+    const possibilities = storyTeller.biomeSearch.get(this.scene.arena.biomeType);
+    // filter out possibilities based on other reqs, as well as if you've seen it before
+
+    for (const possibility of possibilities) {
+      const path = storyTeller.narrativeDialogue.get(possibility);
+      console.log(path);
+    }
 
     let newTrainer: Trainer;
     // so we don't get the same trainer as before, reset
@@ -3996,24 +4009,24 @@ export class NewNonBattleEncounterPhase extends BattlePhase {
         }
         pokemon.updateInfo();
         /*
-      pokemon.getBattleStat();
-      pokemon.getTypes();
+        pokemon.getBattleStat();
+        pokemon.getTypes();
 
-      pokemon.getMoveset();
-      pokemon.getNature();
-      pokemon.getWeight();
-      pokemon.getAbility();
+        pokemon.getMoveset();
+        pokemon.getNature();
+        pokemon.getWeight();
+        pokemon.getAbility();
 
-      //take action
+        //take action
 
-      pokemon.damage()
+        pokemon.damage()
 
-      pokemon.trySetStatus();
-      pokemon.addFriendship
-      pokemon.setNature
-      pokemon.trySetShiny
+        pokemon.trySetStatus();
+        pokemon.addFriendship
+        pokemon.setNature
+        pokemon.trySetShiny
 
-      */
+        */
 
       }
     }
@@ -4173,29 +4186,29 @@ export class NewNonBattleEncounterPhase extends BattlePhase {
 
         // else: just kill it and move on
         /*
-        this.scene.tweens.add({
-          targets: [ this.scene.arenaEnemy, enemyField ].flat(),
-          alpha: 0,
-          duration: 250,
-          ease: "Sine.easeIn",
-          onComplete: () => enemyField.forEach(enemyPokemon => enemyPokemon.destroy())
-        });
+          this.scene.tweens.add({
+            targets: [ this.scene.arenaEnemy, enemyField ].flat(),
+            alpha: 0,
+            duration: 250,
+            ease: "Sine.easeIn",
+            onComplete: () => enemyField.forEach(enemyPokemon => enemyPokemon.destroy())
+          });
 
-        this.scene.clearEnemyHeldItemModifiers();
+          this.scene.clearEnemyHeldItemModifiers();
 
-        enemyField.forEach(enemyPokemon => {
-          enemyPokemon.hideInfo().then(() => enemyPokemon.destroy());
-          enemyPokemon.hp = 0;
-          enemyPokemon.trySetStatus(StatusEffect.FAINT);
-        });*/
+          enemyField.forEach(enemyPokemon => {
+            enemyPokemon.hideInfo().then(() => enemyPokemon.destroy());
+            enemyPokemon.hp = 0;
+            enemyPokemon.trySetStatus(StatusEffect.FAINT);
+          });*/
 
 
         /*
-        this.scene.pushPhase(new BattleEndPhase(this.scene));
-          this.scene.pushPhase(new NewBattlePhase(this.scene));
-        // PTS TODO: if this was a gym boss, gotta do the thing to end it correctly.
-        this.end()
-        */
+          this.scene.pushPhase(new BattleEndPhase(this.scene));
+            this.scene.pushPhase(new NewBattlePhase(this.scene));
+          // PTS TODO: if this was a gym boss, gotta do the thing to end it correctly.
+          this.end()
+          */
       };
       if (victoryMessages?.length) {
         if (false && this.scene.currentBattle.trainer.config.hasCharSprite) {
@@ -4211,6 +4224,8 @@ export class NewNonBattleEncounterPhase extends BattlePhase {
         showMessageOrEnd();
       }
     }, null, true);
+
+
 
 
 

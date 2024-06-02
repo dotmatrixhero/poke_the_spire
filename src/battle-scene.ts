@@ -201,6 +201,7 @@ export default class BattleScene extends SceneBase {
   public rngCounter: integer = 0;
   public rngSeedOverride: string = "";
   public rngOffset: integer = 0;
+  public lastEncounterWasEvent = false;
 
   /**
    * Allows subscribers to listen for events
@@ -1023,6 +1024,9 @@ export default class BattleScene extends SceneBase {
           this.triggerPokemonFormChange(pokemon, SpeciesFormChangeTimeOfDayTrigger);
         }
       }
+
+      //go next
+      this.lastEncounterWasEvent = false;
       if (!this.gameMode.hasRandomBiomes && !isNewBiome) {
         this.pushPhase(new NextEncounterPhase(this));
       } else {

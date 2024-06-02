@@ -1,28 +1,33 @@
 import { Type } from "./type";
 import { Biome } from "./enums/biome";
-import { default as Pokemon} from "../field/pokemon";
+import { default as Pokemon } from "../field/pokemon";
 import { NonBattleEncounterType } from "./enums/non-battle-encounter-type";
+//import { Ability } from "./ability";
 import { Abilities } from "./enums/abilities";
 import { Moves } from "./enums/moves";
 import { Nature } from "./nature";
-import { ModifierType } from "#app/modifier/modifier-type.js";
+import { ModifierType } from "../modifier/modifier-type.js";
+//import { PersistentModifier } from "#app/modifier/modifier.js";
+//import i18next from "../plugins/i18n";
+//import PokemonData from "#app/system/pokemon-data.js";
 import { Species } from "../data/enums/species";
 import BattleScene from "../battle-scene";
-import { OptionSelectItem } from "#app/ui/abstact-option-select-ui-handler.js";
+//import { SchemeNeutral } from "@material/material-color-utilities";
+import { OptionSelectItem } from "../ui/abstact-option-select-ui-handler.js";
 
 export interface PokemonQuery {
-    species: Species[],
-    minWeight: integer,
-    maxWeight: integer,
-    minFriendship: integer,
-    maxFriendship: integer,
+    species?: Species[],
+    minWeight?: integer,
+    maxWeight?: integer,
+    minFriendship?: integer,
+    maxFriendship?: integer,
     minLevel: integer,
-    maxLevel:integer,
-    requiresLead: boolean, //only the first pokemon may be queried
-    nature: Nature[],
-    type: Type[], // at least one of these types
-    abilities: Abilities[],
-    moves: Moves[]
+    maxLevel?:integer,
+    requiresLead: boolean, //only the first pokemon (usually on the field already) may be queried
+    nature?: Nature[],
+    type?: Type[], // at least one of these types
+    abilities?: Abilities[],
+    moves?: Moves[]
 }
 
 export interface EventRequirements {
@@ -30,6 +35,14 @@ export interface EventRequirements {
     pokemonQuery: PokemonQuery, // ONE party member must adhere; those that do are added to a list and randomly selected as the queried pokemon
     party: object // ALL party members must adhere to whatever's here
 
+}
+
+// Notice these are the same as EventRequirements; although the underlying data is currently the same, the way it's used is different
+// and may change further in the future.
+export interface OptionRequrements {
+    modifier: typeof ModifierType[], //
+    queriedPokemon: PokemonQuery, //The already queried pokemon must have these more specific query items
+    otherPartyPokemon: PokemonQuery // ONE other party member must adhere
 }
 
 export interface NonBattleEncounterOptions extends OptionSelectItem {
@@ -40,13 +53,48 @@ export interface NonBattleEncounterEvent {
     eventRequirements: EventRequirements, // Required for event to occur (in addition to current biome in biomesearhc)
     narratorName:string, //If not null, what name shows up - for dialogue
     encounter:object, // Encounter visual details + text
-    options: object, // UI multi select  ????
+    options: NonBattleEncounterOptions[], // UI multi select  ????
     outcomes: object // handler functions that are called by options based on what occurs
 }
+
 
 export class NonBattleEncounterNarrative {
 // PTS TODO: Add a custom object here with data I want to feed into this class
 // probably track all the ones we've ran into and avoid those ones; we don't really want repeats
+
+  public tstoptions:OptionSelectItem[] = [
+    // when options are loaded, scan for requirements. if not met, remove the option.
+    // if they are, set then other party pokemon then add the option
+    {
+      label: "Yes (takes damage, changes nature)",
+
+      handler: () => {
+        return false;
+        //this.queriedPokemon.damageAndUpdate()
+        // can run animations and effects here too
+        // choose outcome based on what should happen or queue battles, etc.
+      } // find corresponding outcome, roll which random sub-outcome, apply modifier rewards and then return true
+    },
+    {
+      label: "No (lose money)",
+      handler: () => {
+        return false;
+      }
+    },
+    {
+      label: "Teleport away! (party levels up)",
+
+      handler: () => {
+        return false;
+      }
+    },
+    {
+      label: "Protect! (party levels up)",
+
+      handler: () => {
+        return false;
+      }
+    }];
 
   constructor(scene: BattleScene) {
     this.scene = scene;
@@ -192,6 +240,8 @@ export class NonBattleEncounterNarrative {
             handler: () => {
               this.scene;
               console.log(this.queriedPokemon);
+              return true;
+              // Check if queried pokemon is ghost type. If it is, route it to secret outcome (change nature + player lose money)
               //this.queriedPokemon.damageAndUpdate()
               // can run animations and effects here too
               // choose outcome based on what should happen or queue battles, etc.
@@ -201,6 +251,7 @@ export class NonBattleEncounterNarrative {
             label: "No (lose money)",
             optionRequirements: {},
             handler: () => {
+              return true;
 
             }
           },
@@ -213,7 +264,7 @@ export class NonBattleEncounterNarrative {
                 species: [],
                 minWeight: -1,
                 maxWeight: -1,
-                minFriendship: 70,
+                minFriendship: 10,
                 maxFriendship: -1,
                 requiresLead: false, //only the first pokemon may be queried
                 nature: [],
@@ -225,6 +276,7 @@ export class NonBattleEncounterNarrative {
               }
             },
             handler: () => {
+              return true;
 
             }
           },
@@ -237,7 +289,7 @@ export class NonBattleEncounterNarrative {
                 species: [],
                 minWeight: -1,
                 maxWeight: -1,
-                minFriendship: 70,
+                minFriendship: 20,
                 maxFriendship: -1,
                 requiresLead: false, //only the first pokemon may be queried
                 nature: [],
@@ -250,7 +302,7 @@ export class NonBattleEncounterNarrative {
               }
             },
             handler: () => {
-
+              return true;
             }
           },
 
@@ -312,6 +364,7 @@ export class NonBattleEncounterNarrative {
               // open release menu
               // do release
               // call the next outcome handler
+              return true;
             }
           },
           {
@@ -319,6 +372,7 @@ export class NonBattleEncounterNarrative {
             optionRequirements: {},
             handler: () => {
               // call riverdontrelease outcome
+              return true;
             }
           },
           {
@@ -330,6 +384,7 @@ export class NonBattleEncounterNarrative {
             },
             handler: () => {
               // call riverReleasedBiomeSwitch outcome
+              return true;
             }
           }
         ],
@@ -400,6 +455,7 @@ export class NonBattleEncounterNarrative {
             handler: () => {
               this.scene;
               console.log(this.queriedPokemon);
+              return true;
               // Transition straight to fight
             }
           },
@@ -407,6 +463,7 @@ export class NonBattleEncounterNarrative {
             label: "Wait (50/50 party heal or party falls asleep)",
             optionRequirements: {},
             handler: () => {
+              return true;
               // call riverdontrelease outcome
             }
           }
