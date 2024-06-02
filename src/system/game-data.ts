@@ -32,7 +32,7 @@ import { OutdatedPhase, ReloadSessionPhase } from "#app/phases";
 import { Variant, variantData } from "#app/data/variant";
 import {setSettingGamepad, SettingGamepad, settingGamepadDefaults} from "./settings-gamepad";
 import {setSettingKeyboard, SettingKeyboard, settingKeyboardDefaults} from "#app/system/settings-keyboard";
-import { TerrainChangedEvent, WeatherChangedEvent } from "#app/field/arena-events.js";
+import { TerrainChangedEvent, WeatherChangedEvent } from "../field/arena-events.js";
 
 const saveKey = "x0i2O7WRiANTqPmZ"; // Temporary; secure encryption is not yet necessary
 
