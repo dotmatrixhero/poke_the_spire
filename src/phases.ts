@@ -33,7 +33,7 @@ import { ArenaTagType } from "./data/enums/arena-tag-type";
 import { CheckTrappedAbAttr, IgnoreOpponentStatChangesAbAttr, IgnoreOpponentEvasionAbAttr, PostAttackAbAttr, PostBattleAbAttr, PostDefendAbAttr, PostSummonAbAttr, PostTurnAbAttr, PostWeatherLapseAbAttr, PreSwitchOutAbAttr, PreWeatherDamageAbAttr, ProtectStatAbAttr, RedirectMoveAbAttr, BlockRedirectAbAttr, RunSuccessAbAttr, StatChangeMultiplierAbAttr, SuppressWeatherEffectAbAttr, SyncEncounterNatureAbAttr, applyAbAttrs, applyCheckTrappedAbAttrs, applyPostAttackAbAttrs, applyPostBattleAbAttrs, applyPostDefendAbAttrs, applyPostSummonAbAttrs, applyPostTurnAbAttrs, applyPostWeatherLapseAbAttrs, applyPreStatChangeAbAttrs, applyPreSwitchOutAbAttrs, applyPreWeatherEffectAbAttrs, BattleStatMultiplierAbAttr, applyBattleStatMultiplierAbAttrs, IncrementMovePriorityAbAttr, applyPostVictoryAbAttrs, PostVictoryAbAttr, applyPostBattleInitAbAttrs, PostBattleInitAbAttr, BlockNonDirectDamageAbAttr as BlockNonDirectDamageAbAttr, applyPostKnockOutAbAttrs, PostKnockOutAbAttr, PostBiomeChangeAbAttr, applyPostFaintAbAttrs, PostFaintAbAttr, IncreasePpAbAttr, PostStatChangeAbAttr, applyPostStatChangeAbAttrs, AlwaysHitAbAttr, PreventBerryUseAbAttr, StatChangeCopyAbAttr, applyPostMoveUsedAbAttrs, PostMoveUsedAbAttr } from "./data/ability";
 import { Unlockables, getUnlockableName } from "./system/unlockables";
 import { getBiomeKey } from "./field/arena";
-import { BattleType, BattlerIndex, TurnCommand } from "./battle";
+import Battle, { BattleType, BattlerIndex, TurnCommand, FixedBattleConfig } from "./battle";
 import { BattleSpec } from "./enums/battle-spec";
 import { Species } from "./data/enums/species";
 import { HealAchv, LevelAchv, achvs } from "./system/achv";
@@ -62,7 +62,7 @@ import * as Overrides from "./overrides";
 import { TextStyle, addTextObject } from "./ui/text";
 import { Type } from "./data/type";
 import { MoveUsedEvent } from "./battle-scene-events";
-
+import Trainer, { TrainerVariant } from "./field/trainer";
 
 export class LoginPhase extends Phase {
   private showText: boolean;
@@ -3685,7 +3685,14 @@ export class VictoryPhase extends PokemonPhase {
             this.scene.pushPhase(new AddEnemyBuffModifierPhase(this.scene));
           }
         }
-        this.scene.pushPhase(new NewBattlePhase(this.scene));
+        //PTS TODO: push a new phase here if we should have an eventphase. maybe to start (without a map), we have an event every 3
+        if (this.scene.currentBattle.waveIndex % 1 === 0 && !this.scene.lastEncounterWasEvent ) {  // for now trigger every time
+          this.scene.lastEncounterWasEvent = true;
+          this.scene.pushPhase(new NewNonBattleEncounterPhase(this.scene));
+        } else {
+          this.scene.lastEncounterWasEvent = false;
+          this.scene.pushPhase(new NewBattlePhase(this.scene));
+        }
       } else {
         this.scene.currentBattle.battleType = BattleType.CLEAR;
         this.scene.score += this.scene.gameMode.getClearScoreBonus();
@@ -3848,6 +3855,527 @@ export class RibbonModifierRewardPhase extends ModifierRewardPhase {
     });
   }
 }
+
+// PTS: okay yeah this inheritance makes no sense but fuck off
+// Normal flow: NewBattlePhase -> New Battle (presets all battle data and gen trainer)
+//-> NextEncounterPhase constructed (hides current biome/etc, then encounterphase renders biome, animates enemy)
+// Instead we: new nonbattleencounter -> don't init a new battle, do dialogue event -> figure out what the next encounter is
+//-> newbattlephhase
+
+
+// PTS TODO: Handle loading sesh (or retrying from death) into an encounter; for now you just get reloaded to last fight
+// PTS TODO: If you run away, you don't get the encounter
+// PTS: TODO: clean up double battles, fuck. Maybe just don't make let encounters follow double battles
+
+
+export class NewNonBattleEncounterPhase extends BattlePhase {
+// should we be extending encounterphase?
+  constructor(scene: BattleScene) {
+    super(scene);
+  }
+
+
+  // basically we are hijacking BattleScene.newBattle(), increments wave, which handles doubles, starts a battle and then cleans it up and goes next
+  // and in turn hijack EncounterPhase.start() -> NextEncounterPhase.doEncounter() -> EncounterPhase.doEncounterCommon()
+  start() {
+
+    super.start();
+    //const fadeDuration = 500;
+    console.log(getBiomeKey(this.scene.arena.biomeType));
+    this.scene.playBgm(getBiomeKey(this.scene.arena.biomeType));
+
+    let newTrainer: Trainer;
+    // so we don't get the same trainer as before, reset
+    this.scene.resetSeed();
+    const battleConfig: FixedBattleConfig = null;
+    console.log(battleConfig);
+    this.scene.lastEnemyTrainer = this.scene.currentBattle?.trainer ?? null;
+    const isTrainerEncounter = false;
+
+    if (isTrainerEncounter) {
+      this.scene.executeWithSeedOffset(() => newTrainer = new Trainer(this.scene, this.scene.arena.randomTrainerType(this.scene.currentBattle.waveIndex), Utils.randSeedInt(2) ? TrainerVariant.FEMALE : TrainerVariant.DEFAULT), this.scene.currentBattle.waveIndex << 8);
+      if (newTrainer) {
+        this.scene.field.add(newTrainer);
+      }
+      // this is newBattle
+      // don't trigger a double battle
+
+      this.scene.executeWithSeedOffset(() => {
+
+        this.scene.currentBattle = new Battle(this.scene.gameMode, this.scene.currentBattle.waveIndex, BattleType.TRAINER, newTrainer, false);
+      }, this.scene.currentBattle.waveIndex << 3, this.scene.waveSeed);
+
+    } else {
+      this.scene.executeWithSeedOffset(() => {
+
+        this.scene.currentBattle = new Battle(this.scene.gameMode, this.scene.currentBattle.waveIndex, BattleType.WILD,  null, false);
+      }, this.scene.currentBattle.waveIndex << 3, this.scene.waveSeed);
+
+    }
+    this.scene.currentBattle.incrementTurn(this.scene);
+
+
+    // unshift by adding a new phase? we can show "enemy" trainer or whatever from battlephase
+
+    this.scene.disableMenu = true;
+
+    //this.scene.arena.biomeType
+    // After choosing an event based on biomes, query for pokemon
+    for (const pokemon of this.scene.getParty()) {
+      if (pokemon) {
+        if (!pokemon.isFainted) {
+          pokemon.heal(50);
+        } else {
+          pokemon.resetStatus();
+          pokemon.heal(Math.floor(pokemon.getMaxHp()/3));
+        }
+        pokemon.updateInfo();
+        /*
+      pokemon.getBattleStat();
+      pokemon.getTypes();
+
+      pokemon.getMoveset();
+      pokemon.getNature();
+      pokemon.getWeight();
+      pokemon.getAbility();
+
+      //take action
+
+      pokemon.damage()
+
+      pokemon.trySetStatus();
+      pokemon.addFriendship
+      pokemon.setNature
+      pokemon.trySetShiny
+
+      */
+
+      }
+    }
+
+    //PTS TODO: Can look up fixed fights here to find future bosses if that's interesting
+
+
+    //this is where we Encounter.start()
+    this.scene.updateGameInfo();
+
+    this.scene.initSession();
+
+    const loadEnemyAssets = [];
+
+    const battle = this.scene.currentBattle;
+
+    let totalBst = 0;
+
+    battle.enemyLevels.forEach((level, e) => {
+
+      if (battle.battleType === BattleType.TRAINER) {
+        battle.enemyParty[e] = battle.trainer.genPartyMember(e);
+      } else {
+        // add random pokemom
+        const enemySpecies = this.scene.randomSpecies(battle.waveIndex, level, true);
+        battle.enemyParty[e] = this.scene.addEnemyPokemon(enemySpecies, level, TrainerSlot.NONE, !!this.scene.getEncounterBossSegments(battle.waveIndex, level, enemySpecies));
+        if (this.scene.currentBattle.battleSpec === BattleSpec.FINAL_BOSS) {
+          battle.enemyParty[e].ivs = new Array(6).fill(31);
+        }
+        this.scene.getParty().slice(0, !battle.double ? 1 : 2).reverse().forEach(playerPokemon => {
+          applyAbAttrs(SyncEncounterNatureAbAttr, playerPokemon, null, battle.enemyParty[e]);
+        });
+      }
+
+      const enemyPokemon = this.scene.getEnemyParty()[e];
+      if (e < (battle.double ? 2 : 1)) {
+        enemyPokemon.setX(-66 + enemyPokemon.getFieldPositionOffset()[0]);
+        enemyPokemon.resetSummonData();
+      }
+      //this.scene.gameData.setPokemonSeen(enemyPokemon, true, battle.battleType === BattleType.TRAINER);
+
+
+      totalBst += enemyPokemon.getSpeciesForm().baseTotal;
+
+      console.log(enemyPokemon);
+      loadEnemyAssets.push(enemyPokemon.loadAssets());
+
+      console.log(enemyPokemon.name, enemyPokemon.species.speciesId, enemyPokemon.stats);
+    });
+
+    if (battle.battleType === BattleType.TRAINER) {
+      loadEnemyAssets.push(battle.trainer.loadAssets().then(() => battle.trainer.initSprite()));
+    } else {
+      if (battle.enemyParty.filter(p => p.isBoss()).length > 1) {
+        for (const enemyPokemon of battle.enemyParty) {
+          if (enemyPokemon.isBoss()) {
+            enemyPokemon.setBoss(true, Math.ceil(enemyPokemon.bossSegments * (enemyPokemon.getSpeciesForm().baseTotal / totalBst)));
+            enemyPokemon.initBattleInfo();
+          }
+        }
+      }
+    }
+
+    Promise.all(loadEnemyAssets).then(() => {
+      battle.enemyParty.forEach((enemyPokemon, e) => {
+        if (e < (battle.double ? 2 : 1)) {
+          if (battle.battleType === BattleType.WILD) {
+            this.scene.field.add(enemyPokemon);
+            battle.seenEnemyPartyMemberIds.add(enemyPokemon.id);
+            const playerPokemon = this.scene.getPlayerPokemon();
+            if (playerPokemon?.visible) {
+              this.scene.field.moveBelow(enemyPokemon as Pokemon, playerPokemon);
+            }
+            enemyPokemon.tint(0, 0.5);
+          } else if (battle.battleType === BattleType.TRAINER) {
+            enemyPokemon.setVisible(false);
+            this.scene.currentBattle.trainer.tint(0, 0.5);
+          }
+          if (battle.double) {
+            enemyPokemon.setFieldPosition(e ? FieldPosition.RIGHT : FieldPosition.LEFT);
+          }
+        }
+      });
+
+
+      regenerateModifierPoolThresholds(this.scene.getEnemyField(), battle.battleType === BattleType.TRAINER ? ModifierPoolType.TRAINER : ModifierPoolType.WILD);
+      this.scene.generateEnemyModifiers();
+
+
+
+    });
+
+
+    // now we're in NextEncounterPhase.doEncounter()
+
+    for (const pokemon of this.scene.getParty()) {
+      if (pokemon) {
+        pokemon.resetBattleData();
+      }
+    }
+
+    // Set the next "enemy";
+    this.scene.arenaNextEnemy.setBiome(this.scene.arena.biomeType);
+    this.scene.arenaNextEnemy.setVisible(true);
+
+    const enemyField = this.scene.getEnemyField();
+    this.scene.tweens.add({
+      targets: [ this.scene.arenaEnemy, this.scene.arenaNextEnemy, this.scene.currentBattle.trainer, enemyField, this.scene.lastEnemyTrainer ].flat(),
+      x: "+=300",
+      duration: 2000,
+      onComplete: () => {
+        this.scene.arenaEnemy.setBiome(this.scene.arena.biomeType);
+        this.scene.arenaEnemy.setX(this.scene.arenaNextEnemy.x);
+        this.scene.arenaEnemy.setAlpha(1);
+        this.scene.arenaNextEnemy.setX(this.scene.arenaNextEnemy.x - 300);
+        this.scene.arenaNextEnemy.setVisible(false);
+        if (this.scene.lastEnemyTrainer) {
+          this.scene.lastEnemyTrainer.destroy();
+        }
+        this.doEncounterCommon(false);
+      }
+    });
+
+
+    // filter events by if modifier (relic) exists
+    // filter events by previous event?
+    // this.scene.findModifier(m => m instanceof MapModifier))
+
+    // choose events based on remaining list, seed
+    // show actual prompt dialogue
+    // need to hide old arena and such (see nextencounterphase tween), figure out what to spawn in; probably self sprite
+    // try and make it clear you're not withdrawing the pokemon though
+    this.scene.ui.showText(i18next.t("nonBattleEncounter:appeared"), null, () => {
+      const victoryMessages = [i18next.t("nonBattleEncounter:blockRecoilDamage",{pokemonName: enemyField[0].name, abilityName: "cockblock"})];
+      const showMessage = () => {
+        let message: string;
+        this.scene.executeWithSeedOffset(() => message = Utils.randSeedItem(victoryMessages), this.scene.currentBattle.waveIndex);
+        const messagePages = message.split(/\$/g).map(m => m.trim());
+        console.log(messagePages);
+        for (let p = messagePages.length - 1; p >= 0; p--) {
+          const originalFunc = showMessageOrEnd;
+          showMessageOrEnd = () => this.scene.ui.showDialogue(messagePages[p], enemyField[0].name, null, originalFunc);
+
+        }
+
+        showMessageOrEnd();
+      };
+
+      let showMessageOrEnd = () => {
+        // fight -> move to next battle phase
+        // PTS TODO: if battles end here we gotta kill the old trainer sprite
+        // also hide the pokeball tray
+        // also make sure we're not just looping same rewards for the wave and looping the same battle lol
+
+        // same rewards issue
+        this.end();
+
+        // else: just kill it and move on
+        /*
+        this.scene.tweens.add({
+          targets: [ this.scene.arenaEnemy, enemyField ].flat(),
+          alpha: 0,
+          duration: 250,
+          ease: "Sine.easeIn",
+          onComplete: () => enemyField.forEach(enemyPokemon => enemyPokemon.destroy())
+        });
+
+        this.scene.clearEnemyHeldItemModifiers();
+
+        enemyField.forEach(enemyPokemon => {
+          enemyPokemon.hideInfo().then(() => enemyPokemon.destroy());
+          enemyPokemon.hp = 0;
+          enemyPokemon.trySetStatus(StatusEffect.FAINT);
+        });*/
+
+
+        /*
+        this.scene.pushPhase(new BattleEndPhase(this.scene));
+          this.scene.pushPhase(new NewBattlePhase(this.scene));
+        // PTS TODO: if this was a gym boss, gotta do the thing to end it correctly.
+        this.end()
+        */
+      };
+      if (victoryMessages?.length) {
+        if (false && this.scene.currentBattle.trainer.config.hasCharSprite) {
+          const originalFunc = showMessageOrEnd;
+          showMessageOrEnd = () => this.scene.charSprite.hide().then(() => this.scene.hideFieldOverlay(250).then(() => originalFunc()));
+          this.scene.showFieldOverlay(500).then(() => this.scene.charSprite.showCharacter(this.scene.currentBattle.trainer.getKey(), getCharVariantFromDialogue(victoryMessages[0])).then(() => showMessage()));
+        } else {
+          showMessage();
+
+
+        }
+      } else {
+        showMessageOrEnd();
+      }
+    }, null, true);
+
+
+
+    /*
+      this.scene.ui.setMode(Mode.OPTION_SELECT, {
+          options: narrativeDialogue[].options,
+          delay: 1000
+        });
+  */
+    // for releasing pokemon, partyuihandler to partyuimode.release or copy and paste dorelease - important thing to make sure it's the pokemon in question
+
+
+
+    // apply modifiers based on result
+
+    /*
+  this.scene.unshiftPhase(new MoneyRewardPhase(this.scene, this.scene.currentBattle.trainer.config.moneyMultiplier));
+
+  const modifierRewardFuncs = this.scene.currentBattle.trainer.config.modifierRewardFuncs;
+  for (const modifierRewardFunc of modifierRewardFuncs) {
+    this.scene.unshiftPhase(new ModifierRewardPhase(this.scene, modifierRewardFunc));
+  }
+
+  const trainerType = this.scene.currentBattle.trainer.config.trainerType;
+  if (vouchers.hasOwnProperty(TrainerType[trainerType])) {
+    if (!this.scene.validateVoucher(vouchers[TrainerType[trainerType]]) && this.scene.currentBattle.trainer.config.isBoss) {
+      this.scene.unshiftPhase(new ModifierRewardPhase(this.scene, [ modifierTypes.VOUCHER, modifierTypes.VOUCHER, modifierTypes.VOUCHER_PLUS, modifierTypes.VOUCHER_PREMIUM ][vouchers[TrainerType[trainerType]].voucherType]));
+    }
+  }
+  */
+
+    // show resulting dialogue
+    /*
+  this.scene.ui.showText(i18next.t("battle:trainerDefeated", { trainerName: this.scene.currentBattle.trainer.getName(TrainerSlot.NONE, true) }), null, () => {
+    const victoryMessages = this.scene.currentBattle.trainer.getVictoryMessages();
+    const showMessage = () => {
+      let message: string;
+      this.scene.executeWithSeedOffset(() => message = Utils.randSeedItem(victoryMessages), this.scene.currentBattle.waveIndex);
+      const messagePages = message.split(/\$/g).map(m => m.trim());
+
+      for (let p = messagePages.length - 1; p >= 0; p--) {
+        const originalFunc = showMessageOrEnd;
+        showMessageOrEnd = () => this.scene.ui.showDialogue(messagePages[p], this.scene.currentBattle.trainer.getName(), null, originalFunc);
+      }
+
+      showMessageOrEnd();
+    };
+    let showMessageOrEnd = () => this.end();
+    if (victoryMessages?.length) {
+      if (this.scene.currentBattle.trainer.config.hasCharSprite) {
+        const originalFunc = showMessageOrEnd;
+        showMessageOrEnd = () => this.scene.charSprite.hide().then(() => this.scene.hideFieldOverlay(250).then(() => originalFunc()));
+        this.scene.showFieldOverlay(500).then(() => this.scene.charSprite.showCharacter(this.scene.currentBattle.trainer.getKey(), getCharVariantFromDialogue(victoryMessages[0])).then(() => showMessage()));
+      } else {
+        showMessage();
+      }
+    } else {
+      showMessageOrEnd();
+    }
+  }, null, true);
+  */
+    //PTS TODO: Flowing into battle directly from an event will be quite difficult to get right, requires lots of cleanup
+    // from BattleScene.newBattle and EncounterPhase.end()
+
+    //  this.showEnemyTrainer();
+
+
+  }
+
+  // this does have to happen after assets are loaded so put it in a callback
+  doEncounterCommon(showEncounterMessage: boolean = true) {
+  // PTS TODO: Need different behavior if pokemon was recalled in prep for battle or new biome
+  // PTS TODO: Need different behavior if we're gonna transition to battle
+    const enemyField = this.scene.getEnemyField();
+
+    if (this.scene.currentBattle.battleType === BattleType.WILD) {
+      enemyField.forEach(enemyPokemon => {
+        enemyPokemon.untint(100, "Sine.easeOut");
+
+        enemyPokemon.cry();
+        enemyPokemon.showInfo();
+        if (enemyPokemon.isShiny()) {
+          this.scene.validateAchv(achvs.SEE_SHINY);
+        }
+      });
+      this.scene.updateFieldScale();
+      if (showEncounterMessage) {
+        this.scene.ui.showText(this.getEncounterMessage(), null, () => this.end(), 1500);
+      }
+    } else if (this.scene.currentBattle.battleType === BattleType.TRAINER) {
+      const trainer = this.scene.currentBattle.trainer;
+      trainer.untint(100, "Sine.easeOut");
+      trainer.playAnim();
+
+      const doSummon = () => {
+        this.scene.currentBattle.started = true;
+        this.scene.playBgm(undefined);
+        //this.scene.pbTray.showPbTray(this.scene.getParty());
+        this.scene.pbTrayEnemy.showPbTray(this.scene.getEnemyParty());
+
+        const doTrainerSummon = () => {
+          this.hideEnemyTrainer();
+          const availablePartyMembers = this.scene.getEnemyParty().filter(p => !p.isFainted()).length;
+          this.scene.unshiftPhase(new SummonPhase(this.scene, 0, false));
+          if (this.scene.currentBattle.double && availablePartyMembers > 1) {
+            this.scene.unshiftPhase(new SummonPhase(this.scene, 1, false));
+          }
+          this.transitionToBattle();
+        };
+        if (showEncounterMessage) {
+          this.scene.ui.showText(this.getEncounterMessage(), null, doTrainerSummon, 1500, true);
+        } else {
+          doTrainerSummon();
+        }
+      };
+
+      const encounterMessages = this.scene.currentBattle.trainer.getEncounterMessages();
+
+      // if there's only one msg to choose from
+      if (!encounterMessages?.length) {
+        doSummon();
+      } else {
+        // if there are multiple messages to choose
+        const showDialogueAndSummon = () => {
+          let message: string;
+          this.scene.executeWithSeedOffset(() => message = Utils.randSeedItem(encounterMessages), this.scene.currentBattle.waveIndex);
+          if (showEncounterMessage) {
+            this.scene.ui.showDialogue(message, trainer.getName(TrainerSlot.NONE,true), null, () => {
+              this.scene.charSprite.hide().then(() => this.scene.hideFieldOverlay(250).then(() => doSummon()));
+            });
+          } else {
+            this.scene.charSprite.hide().then(() => this.scene.hideFieldOverlay(250).then(() => doSummon()));
+          }
+
+        };
+
+        // major char sprite basically rival on big screen
+        // show dialogue and summon really fucks it all up, so only do that if we wanna fight
+
+        if (this.scene.currentBattle.trainer.config.hasCharSprite) {
+          this.scene.showFieldOverlay(500).then(() => this.scene.charSprite.showCharacter(trainer.getKey(), getCharVariantFromDialogue(encounterMessages[0])).then(() => showDialogueAndSummon()));
+        } else {
+          showDialogueAndSummon();
+        }
+
+      }
+    }
+  }
+
+  getEncounterMessage(): string {
+    const enemyField = this.scene.getEnemyField();
+
+    if (this.scene.currentBattle.battleSpec === BattleSpec.FINAL_BOSS) {
+      return i18next.t("battle:bossAppeared", {bossName: enemyField[0].name});
+    }
+
+    if (this.scene.currentBattle.battleType === BattleType.TRAINER) {
+      if (this.scene.currentBattle.double) {
+        return i18next.t("battle:trainerAppearedDouble", {trainerName: this.scene.currentBattle.trainer.getName(TrainerSlot.NONE, true)});
+
+      } else {
+        return i18next.t("battle:trainerAppeared", {trainerName: this.scene.currentBattle.trainer.getName(TrainerSlot.NONE, true)});
+      }
+    }
+
+    return enemyField.length === 1
+      ? i18next.t("battle:singleWildAppeared", {pokemonName: enemyField[0].name})
+      : i18next.t("battle:multiWildAppeared", {pokemonName1: enemyField[0].name, pokemonName2: enemyField[1].name});
+  }
+
+
+  transitionToBattle() {
+
+    const enemyField = this.scene.getEnemyField();
+
+    enemyField.forEach((enemyPokemon, e) => {
+      if (enemyPokemon.isShiny()) {
+        this.scene.unshiftPhase(new ShinySparklePhase(this.scene, BattlerIndex.ENEMY + e));
+      }
+    });
+
+    if (this.scene.currentBattle.battleType !== BattleType.TRAINER) {
+      enemyField.map(p => this.scene.pushPhase(new PostSummonPhase(this.scene, p.getBattlerIndex())));
+      const ivScannerModifier = this.scene.findModifier(m => m instanceof IvScannerModifier);
+      if (ivScannerModifier) {
+        enemyField.map(p => this.scene.pushPhase(new ScanIvsPhase(this.scene, p.getBattlerIndex(), Math.min(ivScannerModifier.getStackCount() * 2, 6))));
+      }
+    }
+
+
+    const availablePartyMembers = this.scene.getParty().filter(p => !p.isFainted());
+    console.log(availablePartyMembers);
+    if (availablePartyMembers[0].isOnField()) {
+      applyPostBattleInitAbAttrs(PostBattleInitAbAttr, availablePartyMembers[0]);
+    } else {
+      this.scene.pushPhase(new SummonPhase(this.scene, 0));
+    }
+
+
+    if (this.scene.currentBattle.double) {
+      if (availablePartyMembers.length > 1) {
+        this.scene.pushPhase(new ToggleDoublePositionPhase(this.scene, true));
+        if (availablePartyMembers[1].isOnField()) {
+          applyPostBattleInitAbAttrs(PostBattleInitAbAttr, availablePartyMembers[1]);
+        } else {
+          this.scene.pushPhase(new SummonPhase(this.scene, 1));
+        }
+      }
+    } else {
+      if (availablePartyMembers.length > 1 && availablePartyMembers[1].isOnField()) {
+        this.scene.pushPhase(new ReturnPhase(this.scene, 1));
+      }
+      this.scene.pushPhase(new ToggleDoublePositionPhase(this.scene, false));
+    }
+
+    if (this.scene.currentBattle.battleType !== BattleType.TRAINER && (this.scene.currentBattle.waveIndex > 1 || !this.scene.gameMode.isDaily)) {
+      const minPartySize = this.scene.currentBattle.double ? 2 : 1;
+      if (availablePartyMembers.length > minPartySize) {
+        this.scene.pushPhase(new CheckSwitchPhase(this.scene, 0, this.scene.currentBattle.double));
+        if (this.scene.currentBattle.double) {
+          this.scene.pushPhase(new CheckSwitchPhase(this.scene, 1, this.scene.currentBattle.double));
+        }
+      }
+    }
+
+  }
+}
+
+
+
 
 export class GameOverPhase extends BattlePhase {
   private victory: boolean;

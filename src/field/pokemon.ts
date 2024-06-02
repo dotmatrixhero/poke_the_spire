@@ -302,6 +302,7 @@ export default abstract class Pokemon extends Phaser.GameObjects.Container {
   abstract getBattlerIndex(): BattlerIndex;
 
   loadAssets(ignoreOverride: boolean = true): Promise<void> {
+
     return new Promise(resolve => {
       const moveIds = this.getMoveset().map(m => m.getMove().id);
       Promise.allSettled(moveIds.map(m => initMoveAnim(this.scene, m)))
