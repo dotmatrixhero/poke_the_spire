@@ -14,6 +14,13 @@ import { Species } from "../data/enums/species";
 import BattleScene from "../battle-scene";
 //import { SchemeNeutral } from "@material/material-color-utilities";
 import { OptionSelectItem } from "../ui/abstact-option-select-ui-handler.js";
+import { TimeOfDay } from "./enums/time-of-day";
+import { Status } from "./status-effect";
+import { EvolutionItem } from "./pokemon-evolutions";
+import { FormChangeItem } from "./pokemon-forms";
+
+//EvolutionItemModifierType <- note to use this to generate evo item
+
 
 export interface PokemonQuery {
     species?: Species[],
@@ -21,28 +28,34 @@ export interface PokemonQuery {
     maxWeight?: integer,
     minFriendship?: integer,
     maxFriendship?: integer,
-    minLevel: integer,
+    minLevel?: integer,
     maxLevel?:integer,
-    requiresLead: boolean, //only the first pokemon (usually on the field already) may be queried
+    requiresLead?: boolean, //only the first pokemon (usually on the field already) may be queried
     nature?: Nature[],
     type?: Type[], // at least one of these types
     abilities?: Abilities[],
-    moves?: Moves[]
+    moves?: Moves[],
+    hasStatus?: Status[],
+    canFormChangeWithItems?: FormChangeItem[],
+    canEvoWithItems?: EvolutionItem[]
+
 }
+
 
 export interface EventRequirements {
-    modifier: typeof ModifierType[], // AT LEAST ONE modifier in this list should be held by player in order for this event to occur
-    pokemonQuery: PokemonQuery, // ONE party member must adhere; those that do are added to a list and randomly selected as the queried pokemon
-    party: object // ALL party members must adhere to whatever's here
+    modifier?: typeof ModifierType[], // AT LEAST ONE modifier in this list should be held by player in order for this event to occur
+    pokemonQuery?: PokemonQuery, // ONE party member must adhere; those that do are added to a list and randomly selected as the queried pokemon
+    party?: object, // ALL party members must adhere to whatever's here
+    timeOfDay?: TimeOfDay[]
 
 }
 
-// Notice these are the same as EventRequirements; although the underlying data is currently the same, the way it's used is different
+// Notice these are the same as EventRequirements; although the underlying data is currently the similar, the way it's used is different
 // and may change further in the future.
 export interface OptionRequrements {
-    modifier: typeof ModifierType[], //
-    queriedPokemon: PokemonQuery, //The already queried pokemon must have these more specific query items
-    otherPartyPokemon: PokemonQuery // ONE other party member must adhere
+    modifier?: typeof ModifierType[], //
+    queriedPokemon?: PokemonQuery, //The already queried pokemon must have these more specific query items
+    otherPartyPokemon?: PokemonQuery // ONE other party member must adhere
 }
 
 export interface NonBattleEncounterOptions extends OptionSelectItem {

@@ -63,7 +63,7 @@ import { TextStyle, addTextObject } from "./ui/text";
 import { Type } from "./data/type";
 import { MoveUsedEvent, TurnEndEvent, TurnInitEvent } from "./battle-scene-events";
 import Trainer, { TrainerVariant } from "./field/trainer";
-import {NonBattleEncounterNarrative} from "./data/non-battle-encounter-narrative";
+import {NonBattleEncounterEvent, NonBattleEncounterNarrative} from "./data/non-battle-encounter-narrative";
 
 export class LoginPhase extends Phase {
   private showText: boolean;
@@ -3954,14 +3954,190 @@ export class NewNonBattleEncounterPhase extends BattlePhase {
     console.log(getBiomeKey(this.scene.arena.biomeType));
     this.scene.playBgm(getBiomeKey(this.scene.arena.biomeType));
 
-    const possibilities = storyTeller.biomeSearch.get(this.scene.arena.biomeType);
-    // filter out possibilities based on other reqs, as well as if you've seen it before
+    const narrativeEventsTypes = storyTeller.biomeSearch.get(this.scene.arena.biomeType);
+    console.log(narrativeEventsTypes);
 
-    for (const possibility of possibilities) {
-      const path = storyTeller.narrativeDialogue.get(possibility);
-      console.log(path);
+
+    const currentPossibilities: NonBattleEncounterEvent[] = [];
+    const pokemonFoundForEvent: PlayerPokemon[] = [];
+    for (const narrativeEventType of narrativeEventsTypes) {
+      const narrativeEvent = storyTeller.narrativeDialogue.get(narrativeEventType);
+      const reqs = storyTeller.narrativeDialogue.get(narrativeEventType).eventRequirements;
+
+      const eventIsNew = true;
+      let modifierFound = true;
+
+      const partyReqsMet = true;
+      let timeOfDayCorrect = true;
+
+      // PTS TODO: filter out possibilities based on if you've seen it before
+      // filter out if you can't find modifiers
+      if (reqs.modifier && reqs.modifier.length !== 0) {
+        modifierFound = false;
+        for (const modifier of reqs.modifier) {
+          const foundModifier = this.scene.findModifier(m => m instanceof modifier);
+          if (foundModifier) {
+            modifierFound = true;
+          }
+        }
+      }
+      const tod = this.scene.arena.getTimeOfDay();
+
+      if (reqs.timeOfDay && reqs.timeOfDay.length !== 0 && modifierFound) {
+        timeOfDayCorrect = false;
+        for (const times of reqs.timeOfDay) {
+          if (tod === times) {
+            timeOfDayCorrect = true;
+          }
+        }
+      }
+
+
+      // add all pokemon to the list and remove them as they fail the reqs of the query
+      const party = this.scene.getParty();
+      console.log(party);
+
+      for (const pokemon of party) {
+        pokemonFoundForEvent.push(pokemon);
+      }
+
+      // use this to mark indices for deletion for the party of pokemon that failed the query
+      const spliceIndex = [];
+
+      if (reqs.pokemonQuery && modifierFound && eventIsNew && timeOfDayCorrect)  {
+        const q = reqs.pokemonQuery;
+
+
+        if (q.abilities && q.abilities.length > 0) {
+          for (let index = 0; index < party.length; index++) {
+            const pokemon = party[index];
+            let abilityFound = false;
+            for (const ability of q.abilities) {
+              if (pokemon.hasAbility(ability)) {
+                abilityFound = true;
+              }
+            }
+            if (!abilityFound) {
+              spliceIndex.push(index);
+            }
+          }
+        }
+
+        if (q.moves && q.moves.length > 0) {
+          for (let index = 0; index < party.length; index++) {
+            const pokemon = party[index];
+            let moveFound = false;
+            for (const move of pokemon.moveset) {
+              if (q.moves.includes(move.moveId)) {
+                moveFound = true;
+              }
+            }
+            if (!moveFound) {
+              spliceIndex.push(index);
+            }
+          }
+        }
+
+        if (q.type && q.type.length > 0) {
+          for (let index = 0; index < party.length; index++) {
+            const pokemon = party[index];
+            let typeFound = false;
+            for (const typez of q.type) {
+              if (pokemon.isOfType(typez)) {
+                typeFound = true;
+              }
+            }
+            if (!typeFound) {
+              spliceIndex.push(index);
+            }
+          }
+        }
+
+        if (q.nature && q.nature.length > 0) {
+          for (let index = 0; index < party.length; index++) {
+            const pokemon = party[index];
+            let natureFound = false;
+            for (const nat of q.nature) {
+              if (pokemon.getNature() === nat) {
+                natureFound = true;
+              }
+            }
+            if (!natureFound) {
+              spliceIndex.push(index);
+            }
+          }
+        }
+
+        if (q.species && q.nature.length > 0) {
+          for (let index = 0; index < party.length; index++) {
+            const pokemon = party[index];
+            let speciFound = false;
+            for (const speci of q.species) {
+              if (pokemon.species.speciesId === speci) {
+                speciFound = true;
+              }
+            }
+            if (!speciFound) {
+              spliceIndex.push(index);
+            }
+          }
+        }
+
+        if (q.canEvoWithItems && q.canEvoWithItems.length > 0) {
+
+        }
+
+
+        if (q.maxFriendship && q.maxFriendship !== -1) {
+
+        }
+
+        if (q.minFriendship && q.minFriendship !== -1) {
+
+        }
+
+        if (q.minLevel && q.minLevel !== -1) {
+
+        }
+
+        if (q.maxLevel && q.maxLevel !== -1) {
+
+        }
+
+        if (q.minWeight && q.minWeight !== -1) {
+
+        }
+
+        if (q.maxWeight && q.maxWeight !== -1) {
+
+        }
+
+        // disqualify all the other pokemon aside from slot 0
+        if (q.requiresLead) {
+          spliceIndex.push ([1,2,3,4,5]);
+        }
+
+        // remove the pokemon marked for deletion
+        for (let index = pokemonFoundForEvent.length -1; index >= 0; index--) {
+          if (spliceIndex.includes(index)) {
+            pokemonFoundForEvent.splice(index, 1);
+          }
+        }
+
+      }
+      if (reqs.party)  {
+
+        for (const pokemon of this.scene.getParty()) {
+          console.log(pokemon);
+        }
+      }
+
+      if (eventIsNew && modifierFound && pokemonFoundForEvent.length > 0 && partyReqsMet && timeOfDayCorrect) {
+        currentPossibilities.push(narrativeEvent);
+      }
     }
 
+    console.log(currentPossibilities);
     let newTrainer: Trainer;
     // so we don't get the same trainer as before, reset
     this.scene.resetSeed();
@@ -4417,20 +4593,15 @@ export class NewNonBattleEncounterPhase extends BattlePhase {
 
 
     const availablePartyMembers = this.scene.getParty().filter(p => !p.isFainted());
-    console.log(availablePartyMembers);
-    if (availablePartyMembers[0].isOnField()) {
-      applyPostBattleInitAbAttrs(PostBattleInitAbAttr, availablePartyMembers[0]);
-    } else {
+
+    if (!availablePartyMembers[0].isOnField()) {
       this.scene.pushPhase(new SummonPhase(this.scene, 0));
     }
-
 
     if (this.scene.currentBattle.double) {
       if (availablePartyMembers.length > 1) {
         this.scene.pushPhase(new ToggleDoublePositionPhase(this.scene, true));
-        if (availablePartyMembers[1].isOnField()) {
-          applyPostBattleInitAbAttrs(PostBattleInitAbAttr, availablePartyMembers[1]);
-        } else {
+        if (!availablePartyMembers[1].isOnField()) {
           this.scene.pushPhase(new SummonPhase(this.scene, 1));
         }
       }
