@@ -5,6 +5,7 @@ import { battle } from "./battle";
 import { battleMessageUiHandler } from "./battle-message-ui-handler";
 import { berry } from "./berry";
 import { biome } from "./biome";
+import { challenges } from "./challenges";
 import { commandUiHandler } from "./command-ui-handler";
 import {
   PGFbattleSpecDialogue,
@@ -36,6 +37,7 @@ import { tutorial } from "./tutorial";
 import { voucher } from "./voucher";
 import { nonBattleEncounter } from "./non-battle-encounter";
 import { weather } from "./weather";
+import { partyUiHandler } from "./party-ui-handler";
 
 export const enConfig = {
   ability: ability,
@@ -45,6 +47,7 @@ export const enConfig = {
   battleMessageUiHandler: battleMessageUiHandler,
   berry: berry,
   biome: biome,
+  challenges: challenges,
   commandUiHandler: commandUiHandler,
   PGMdialogue: PGMdialogue,
   PGFdialogue: PGFdialogue,
@@ -63,6 +66,7 @@ export const enConfig = {
   modifierType: modifierType,
   move: move,
   nature: nature,
+  nonBattleEncounter: nonBattleEncounter,
   pokeball: pokeball,
   pokemon: pokemon,
   pokemonInfo: pokemonInfo,
@@ -75,5 +79,5 @@ export const enConfig = {
   tutorial: tutorial,
   voucher: voucher,
   weather: weather,
-  nonBattleEncounter: nonBattleEncounter
+  partyUiHandler: partyUiHandler
 };
