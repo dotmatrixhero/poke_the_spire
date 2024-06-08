@@ -35,6 +35,7 @@ import { titles, trainerClasses, trainerNames } from "./trainers";
 import { tutorial } from "./tutorial";
 import { voucher } from "./voucher";
 import { nonBattleEncounter } from "./non-battle-encounter";
+import { weather } from "./weather";
 
 export const enConfig = {
   ability: ability,
@@ -73,5 +74,6 @@ export const enConfig = {
   trainerNames: trainerNames,
   tutorial: tutorial,
   voucher: voucher,
+  weather: weather,
   nonBattleEncounter: nonBattleEncounter
 };
