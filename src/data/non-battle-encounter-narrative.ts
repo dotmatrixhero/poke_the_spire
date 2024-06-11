@@ -30,6 +30,7 @@ import { Modifier, TurnHealModifier } from "#app/modifier/modifier";
 import { PartyOption, PartyUiMode } from "#app/ui/party-ui-handler";
 
 
+
 //EvolutionItemModifierType <- note to use this to generate evo item
 
 export interface QueriedEventData {
@@ -143,7 +144,7 @@ export class NonBattleEncounterNarrative {
 
   public biomeSearch = new Map<Biome, NonBattleEncounterType[]>([
     [Biome.TOWN, [
-      NonBattleEncounterType.RIVER_RELEASE,
+      NonBattleEncounterType.AMBUSH_NATURE_CHANGE,
       NonBattleEncounterType.SNORLAX_SLEEP_FIGHT
     ]],
     [Biome.PLAINS,[
@@ -279,8 +280,10 @@ export class NonBattleEncounterNarrative {
               // find corresponding outcome, roll which random sub-outcome, apply modifier rewards and then return true
 
               this.protagonistPokemon.damage(100);
+              const statusEffect = this.protagonistPokemon.status;
               if (this.protagonistPokemon.hp <= 0 ) {
                 this.protagonistPokemon.hp = 1;
+                this.protagonistPokemon.trySetStatus(statusEffect.effect);
 
               }
               let maxStat:Stat;
@@ -700,10 +703,13 @@ export class NonBattleEncounterNarrative {
               if (bgmPlaying) {
                 this.scene.fadeOutBgm(1000, false);
               }
-              const random = Utils.randInt(100,0);
-              if (random === 0) {
-                const outcome = this.currentEvent.outcomes[NonBattleEncounterOutcomeType.WAIT_FOR_SNORLAX_HEALED];
+              let random:integer;
 
+              this.scene.executeWithSeedOffset(() => {
+                random = Utils.randSeedInt(100, 0);
+              }, this.scene.currentBattle.waveIndex);
+              if (random > 50) {
+                const outcome = this.currentEvent.outcomes[NonBattleEncounterOutcomeType.WAIT_FOR_SNORLAX_HEALED];
 
                 this.scene.ui.fadeOut(1000).then(() => {
                   const p = this.scene.getEnemyField()[0];
