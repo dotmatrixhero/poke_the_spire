@@ -783,7 +783,8 @@ export class GameData {
       trainer: scene.currentBattle.battleType === BattleType.TRAINER ? new TrainerData(scene.currentBattle.trainer) : null,
       gameVersion: scene.game.config.gameVersion,
       timestamp: new Date().getTime(),
-      challenges: scene.gameMode.challenges.map(c => new ChallengeData(c))
+      challenges: scene.gameMode.challenges.map(c => new ChallengeData(c)),
+      lastEncounterWasEvent: scene.lastEncounterWasEvent
     } as SessionSaveData;
   }
 

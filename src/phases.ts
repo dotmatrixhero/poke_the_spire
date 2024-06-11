@@ -33,7 +33,7 @@ import { ArenaTagType } from "./data/enums/arena-tag-type";
 import { CheckTrappedAbAttr, IgnoreOpponentStatChangesAbAttr, IgnoreOpponentEvasionAbAttr, PostAttackAbAttr, PostBattleAbAttr, PostDefendAbAttr, PostSummonAbAttr, PostTurnAbAttr, PostWeatherLapseAbAttr, PreSwitchOutAbAttr, PreWeatherDamageAbAttr, ProtectStatAbAttr, RedirectMoveAbAttr, BlockRedirectAbAttr, RunSuccessAbAttr, StatChangeMultiplierAbAttr, SuppressWeatherEffectAbAttr, SyncEncounterNatureAbAttr, applyAbAttrs, applyCheckTrappedAbAttrs, applyPostAttackAbAttrs, applyPostBattleAbAttrs, applyPostDefendAbAttrs, applyPostSummonAbAttrs, applyPostTurnAbAttrs, applyPostWeatherLapseAbAttrs, applyPreStatChangeAbAttrs, applyPreSwitchOutAbAttrs, applyPreWeatherEffectAbAttrs, BattleStatMultiplierAbAttr, applyBattleStatMultiplierAbAttrs, IncrementMovePriorityAbAttr, applyPostVictoryAbAttrs, PostVictoryAbAttr, BlockNonDirectDamageAbAttr as BlockNonDirectDamageAbAttr, applyPostKnockOutAbAttrs, PostKnockOutAbAttr, PostBiomeChangeAbAttr, applyPostFaintAbAttrs, PostFaintAbAttr, IncreasePpAbAttr, PostStatChangeAbAttr, applyPostStatChangeAbAttrs, AlwaysHitAbAttr, PreventBerryUseAbAttr, StatChangeCopyAbAttr, applyPostMoveUsedAbAttrs, PostMoveUsedAbAttr, MaxMultiHitAbAttr, HealFromBerryUseAbAttr } from "./data/ability";
 import { Unlockables, getUnlockableName } from "./system/unlockables";
 import { getBiomeKey } from "./field/arena";
-import { BattleType, BattlerIndex, TurnCommand } from "./battle";
+import Battle, { BattleType, BattlerIndex, TurnCommand, FixedBattleConfig } from "./battle";
 import { BattleSpec } from "./enums/battle-spec";
 import { Species } from "./data/enums/species";
 import { ChallengeAchv, HealAchv, LevelAchv, achvs } from "./system/achv";
@@ -46,7 +46,7 @@ import { loggedInUser, updateUserInfo } from "./account";
 import { SessionSaveData } from "./system/game-data";
 import { PlayerGender } from "./data/enums/player-gender";
 import { addPokeballCaptureStars, addPokeballOpenParticles } from "./field/anims";
-import { SpeciesFormChangeActiveTrigger, SpeciesFormChangeManualTrigger, SpeciesFormChangeMoveLearnedTrigger, SpeciesFormChangePostMoveTrigger, SpeciesFormChangePreMoveTrigger } from "./data/pokemon-forms";
+import { SpeciesFormChangeActiveTrigger, SpeciesFormChangeItemTrigger, SpeciesFormChangeManualTrigger, SpeciesFormChangeMoveLearnedTrigger, SpeciesFormChangePostMoveTrigger, SpeciesFormChangePreMoveTrigger, pokemonFormChanges } from "./data/pokemon-forms";
 import { battleSpecDialogue, getCharVariantFromDialogue, miscDialogue } from "./data/dialogue";
 import ModifierSelectUiHandler, { SHOP_OPTIONS_ROW_LIMIT } from "./ui/modifier-select-ui-handler";
 import { SettingKeys } from "./system/settings/settings";
@@ -56,7 +56,7 @@ import { OptionSelectConfig, OptionSelectItem } from "./ui/abstact-option-select
 import { SaveSlotUiMode } from "./ui/save-slot-select-ui-handler";
 import { fetchDailyRunSeed, getDailyRunStarters } from "./data/daily-run";
 import { GameMode, GameModes, getGameMode } from "./game-mode";
-import PokemonSpecies, { getPokemonSpecies, speciesStarters } from "./data/pokemon-species";
+import PokemonSpecies, { SpeciesFormKey, getPokemonSpecies, speciesStarters } from "./data/pokemon-species";
 import i18next from "./plugins/i18n";
 import { Abilities } from "./data/enums/abilities";
 import * as Overrides from "./overrides";
@@ -64,6 +64,10 @@ import { TextStyle, addTextObject } from "./ui/text";
 import { Type } from "./data/type";
 import { BerryUsedEvent, EncounterPhaseEvent, MoveUsedEvent, TurnEndEvent, TurnInitEvent } from "./battle-scene-events";
 import { ExpNotification } from "./enums/exp-notification";
+import Trainer, { TrainerVariant } from "./field/trainer";
+import {EventRequirements, NonBattleEncounterEvent, NonBattleEncounterNarrative, NonBattleEncounterOptions, PokemonQuery, QueriedEventData} from "./data/non-battle-encounter-narrative";
+import { pokemonEvolutions } from "./data/pokemon-evolutions";
+import { getNatureName } from "./data/nature";
 
 
 export class LoginPhase extends Phase {
@@ -3840,7 +3844,14 @@ export class VictoryPhase extends PokemonPhase {
             this.scene.pushPhase(new AddEnemyBuffModifierPhase(this.scene));
           }
         }
-        this.scene.pushPhase(new NewBattlePhase(this.scene));
+        //PTS TODO: push a new phase here if we should have an eventphase. maybe to start (without a map), we have an event every 3
+        if (this.scene.currentBattle.waveIndex % 1 === 0 && !this.scene.lastEncounterWasEvent ) {  // for now trigger every time
+          this.scene.lastEncounterWasEvent = true;
+          this.scene.pushPhase(new NewNonBattleEncounterPhase(this.scene));
+        } else {
+          this.scene.lastEncounterWasEvent = false;
+          this.scene.pushPhase(new NewBattlePhase(this.scene));
+        }
       } else {
         this.scene.currentBattle.battleType = BattleType.CLEAR;
         this.scene.score += this.scene.gameMode.getClearScoreBonus();
@@ -4000,6 +4011,887 @@ export class RibbonModifierRewardPhase extends ModifierRewardPhase {
     });
   }
 }
+
+// PTS: okay yeah this inheritance of nonbattle = battle makes no sense but fuck off
+// Normal flow: NewBattlePhase -> New Battle (presets all battle data and gen trainer)
+//-> NextEncounterPhase constructed (hides current biome/etc, then encounterphase renders biome, animates enemy)
+// Instead we: new nonbattleencounter -> don't init a new battle, do dialogue event -> figure out what the next encounter is
+//-> newbattlephhase
+
+
+// PTS TODO: Handle loading sesh (or retrying from death) into an encounter; for now you just get reloaded to last fight
+// PTS TODO: If you run away, you don't get the encounter
+// PTS: TODO: clean up double battles, fuck. Maybe just don't make let encounters follow double battles
+
+
+export class NewNonBattleEncounterPhase extends BattlePhase {
+// should we be extending encounterphase?
+  constructor(scene: BattleScene) {
+    super(scene);
+  }
+
+
+  // basically we are hijacking BattleScene.newBattle(), increments wave, which handles doubles, starts a battle and then cleans it up and goes next
+  // and in turn hijack EncounterPhase.start() -> NextEncounterPhase.doEncounter() -> EncounterPhase.doEncounterCommon()
+  start() {
+
+    super.start();
+
+    const storyTeller = new NonBattleEncounterNarrative(this.scene);
+
+
+    //    const fadeDuration = 500;
+    console.log(getBiomeKey(this.scene.arena.biomeType));
+    this.scene.playBgm(getBiomeKey(this.scene.arena.biomeType));
+
+    const narrativeEventsTypes = storyTeller.biomeSearch.get(this.scene.arena.biomeType);
+
+
+    const currentPossibilities = new Map<NonBattleEncounterEvent, QueriedEventData>();
+    let pokemonFoundForEvent: PlayerPokemon[] = [];
+    let additionalPokemonForEvent: PlayerPokemon[] = [];
+    // add all pokemon to the list and remove them as they fail the reqs of the query
+    const party = this.scene.getParty();
+
+    // By default, all of these pokemon qualify
+    for (const pokemon of party) {
+      pokemonFoundForEvent.push(pokemon);
+    }
+    for (const pokemon of party) {
+      additionalPokemonForEvent.push(pokemon);
+    }
+
+    for (const narrativeEventType of narrativeEventsTypes) {
+      const narrativeEvent = storyTeller.narrativeDialogue.get(narrativeEventType);
+      const reqs = narrativeEvent.eventRequirements;
+
+      const eventIsNew = true;
+      ///////////////////////////////////////////////////////////////////////
+      const qEventData = this.seeIfMeetsRequirements(reqs, pokemonFoundForEvent, additionalPokemonForEvent, false);
+      pokemonFoundForEvent =qEventData.qualifiedProtagonists;
+      additionalPokemonForEvent = qEventData.supports;
+      const requirementsPassed = qEventData.reqsMet;
+
+      //////////////////////////////////////////////////////////////////////
+      // randomly select the protagonist pokemon; then de-dupe the pokemon from additional pokemon query
+      let protagonist;
+      this.scene.executeWithSeedOffset(() => protagonist = Utils.randSeedItem(pokemonFoundForEvent), this.scene.currentBattle.waveIndex);
+      if (additionalPokemonForEvent.includes(protagonist)) {
+        let indx;
+        additionalPokemonForEvent.some(function(item, index) {
+          indx = index; return item === protagonist;
+        });
+        additionalPokemonForEvent.splice(indx ,1);
+      }
+      console.log(narrativeEvent.encounter.text({}));
+      console.log("The pokemon qualifying for this event are:");
+
+      console.log(pokemonFoundForEvent.flatMap((p)=> {
+        return p.name;
+      }));
+
+
+      if (eventIsNew && requirementsPassed) {
+        currentPossibilities.set(narrativeEvent,
+          {
+            protagonist: protagonist,
+            qualifiedProtagonists: pokemonFoundForEvent,
+            reqsMet: true,
+            supports: additionalPokemonForEvent
+          });
+      }
+
+      pokemonFoundForEvent = [];
+      additionalPokemonForEvent = [];
+      // By default, all of these pokemon qualify
+      for (const pokemon of party) {
+        pokemonFoundForEvent.push(pokemon);
+      }
+      for (const pokemon of party) {
+        additionalPokemonForEvent.push(pokemon);
+      }
+
+    }
+
+    console.log(currentPossibilities);
+    const arr:NonBattleEncounterEvent[] = Array.from(currentPossibilities.keys());
+    if (arr.length <= 0) {
+      // no cool things to happen, so let's just move on
+      this.cleanUpPeacefulSceneBeforeEnd();
+      this.end();
+    } else {
+
+      // IS THIS WORKING? I GOT LIKE 7 SNORLAXES
+      const selectedEncounter = Utils.randSeedItem(arr);
+      //this.scene.executeWithSeedOffset(() => selectedEncounter = Utils.randSeedItem(Array.from(currentPossibilities.keys())), this.scene.currentBattle.waveIndex);
+      console.log("Selected Encounter");
+      console.log(selectedEncounter);
+
+      this.scene.disableMenu = true;
+
+      //this.scene.arena.biomeType
+      // After choosing an event based on biomes, query for pokemon
+      for (const pokemon of this.scene.getParty()) {
+        if (pokemon) {
+          if (!pokemon.isFainted) {
+            pokemon.heal(50);
+          } else {
+            pokemon.resetStatus();
+            pokemon.heal(Math.floor(pokemon.getMaxHp()/3));
+          }
+          pokemon.updateInfo();
+
+        }
+      }
+
+      //PTS TODO: Can look up fixed fights here to find future bosses if that's interesting
+      const emptyScene =  (selectedEncounter.encounter.trainer === null && selectedEncounter.encounter.pokemon === null);
+
+      if (!emptyScene) {
+        this.generateAndLoadScene(selectedEncounter);
+      }
+      // now we're in NextEncounterPhase.doEncounter()
+
+      for (const pokemon of this.scene.getParty()) {
+        if (pokemon) {
+          pokemon.resetBattleData();
+        }
+      }
+
+
+
+      // Set the next "enemy";
+      const renderScene = () => {
+        this.scene.arenaNextEnemy.setBiome(this.scene.arena.biomeType);
+        this.scene.arenaNextEnemy.setVisible(true);
+
+        const enemyField = this.scene.getEnemyField();
+        this.scene.tweens.add({
+          targets: [ this.scene.arenaEnemy, this.scene.arenaNextEnemy, this.scene.currentBattle.trainer, enemyField, this.scene.lastEnemyTrainer ].flat(),
+          x: "+=300",
+          duration: 2000,
+          onComplete: () => {
+            this.scene.arenaEnemy.setBiome(this.scene.arena.biomeType);
+            this.scene.arenaEnemy.setX(this.scene.arenaNextEnemy.x);
+            this.scene.arenaEnemy.setAlpha(1);
+            this.scene.arenaNextEnemy.setX(this.scene.arenaNextEnemy.x - 300);
+            this.scene.arenaNextEnemy.setVisible(false);
+            if (this.scene.lastEnemyTrainer) {
+              this.scene.lastEnemyTrainer.destroy();
+            }
+            if (!emptyScene) {
+              this.doEncounterCommon(false);
+            }
+          }
+        });
+      };
+
+      // if we want to show dialogue before we start a narrator
+      const eventData = currentPossibilities.get(selectedEncounter);
+
+      if (selectedEncounter.encounter.encounterPretext) {
+        this.scene.ui.showText(selectedEncounter.encounter.encounterPretext(
+          {pokemonName:eventData.protagonist.name,
+            biome:getBiomeKey(this.scene.arena.biomeType).replace("_", " ")}), null, () => {
+          renderScene();
+        }, null, true);
+      } else {
+        renderScene();
+      }
+
+
+      // show actual prompt dialogue
+      // need to hide old arena and such (see nextencounterphase tween), figure out what to spawn in; probably self sprite
+      // try and make it clear you're not withdrawing the pokemon though
+
+      storyTeller.setSupportPartyPokemon(eventData.supports);
+      storyTeller.setProtagonistPokemon(eventData.protagonist);
+
+      storyTeller.setPhase(this);
+      storyTeller.setCurrentEvent(selectedEncounter);
+
+      const encounterText = (selectedEncounter.encounter.text(
+        {pokemonName:eventData.protagonist.name,
+          biome:getBiomeKey(this.scene.arena.biomeType).replace("_", " "),
+          nature: getNatureName(eventData.protagonist.nature)}));
+
+      const opt:NonBattleEncounterOptions[] = [];
+      for (const o of selectedEncounter.options) {
+        if (this.seeIfMeetsRequirements(o.optionRequirements, [eventData.protagonist], additionalPokemonForEvent, true).reqsMet) {
+          opt.push(o);
+        }
+
+      }
+      if (selectedEncounter.narratorName) {
+        this.scene.ui.showDialogue(encounterText, selectedEncounter.narratorName, null, () => {
+          this.scene.ui.setMode(Mode.OPTION_SELECT, {
+            options: opt,
+            delay: 1000
+          });
+        }, null);
+      } else {
+        this.scene.ui.showText(encounterText, null, () => {
+          this.scene.ui.setMode(Mode.OPTION_SELECT, {
+            options: opt,
+            delay: 1000
+          });
+        }, null, true);
+      }
+
+
+      // for releasing pokemon, partyuihandler to partyuimode.release or copy and paste dorelease - important thing to make sure it's the pokemon in question
+      // apply modifiers based on result
+
+      /*
+      storing some misc rewards here in case we want that
+    this.scene.unshiftPhase(new MoneyRewardPhase(this.scene, this.scene.currentBattle.trainer.config.moneyMultiplier));
+
+    const modifierRewardFuncs = this.scene.currentBattle.trainer.config.modifierRewardFuncs;
+    for (const modifierRewardFunc of modifierRewardFuncs) {
+      this.scene.unshiftPhase(new ModifierRewardPhase(this.scene, modifierRewardFunc));
+    }
+
+    const trainerType = this.scene.currentBattle.trainer.config.trainerType;
+    if (vouchers.hasOwnProperty(TrainerType[trainerType])) {
+      if (!this.scene.validateVoucher(vouchers[TrainerType[trainerType]]) && this.scene.currentBattle.trainer.config.isBoss) {
+        this.scene.unshiftPhase(new ModifierRewardPhase(this.scene, [ modifierTypes.VOUCHER, modifierTypes.VOUCHER, modifierTypes.VOUCHER_PLUS, modifierTypes.VOUCHER_PREMIUM ][vouchers[TrainerType[trainerType]].voucherType]));
+      }
+    }
+    */
+
+
+
+    }
+  }
+
+  cleanUpPeacefulSceneBeforeEnd() {
+    const enemyField = this.scene.getEnemyField();
+    console.log(enemyField);
+    if (enemyField.length > 0) {
+
+      this.scene.tweens.add({
+        targets: [ this.scene.arenaEnemy, enemyField ].flat(),
+        alpha: 0,
+        duration: 250,
+        ease: "Sine.easeIn",
+        onComplete: () => enemyField.forEach(enemyPokemon => enemyPokemon.destroy())
+      });
+
+      this.scene.clearEnemyHeldItemModifiers();
+
+      enemyField.forEach(enemyPokemon => {
+        enemyPokemon.hideInfo().then(() => enemyPokemon.destroy());
+        enemyPokemon.hp = 0;
+        enemyPokemon.trySetStatus(StatusEffect.FAINT);
+      });
+
+
+    }
+    this.scene.pushPhase(new BattleEndPhase(this.scene));
+    this.scene.pushPhase(new NewBattlePhase(this.scene));
+
+    // PTS TODO: if this was a gym boss, gotta do the thing to end it correctly.
+
+  }
+
+  generateAndLoadScene(selectedEncounter:NonBattleEncounterEvent) {
+    //this is basically our version of newBattle()+ EncounterPhase.start()
+    // PTS TODO: deal with things like boss hp bars (elites?)
+    // and also still need to call in trainers
+
+    let newTrainer: Trainer;
+    // so we don't get the same trainer as before, reset
+
+    const battleConfig: FixedBattleConfig = null;
+    console.log(battleConfig);
+    this.scene.lastEnemyTrainer = this.scene.currentBattle?.trainer ?? null;
+    const isTrainerEncounter = selectedEncounter.encounter.trainer !== null;
+
+    if (isTrainerEncounter) {
+      this.scene.executeWithSeedOffset(() => newTrainer = new Trainer(this.scene, this.scene.arena.randomTrainerType(this.scene.currentBattle.waveIndex), Utils.randSeedInt(2) ? TrainerVariant.FEMALE : TrainerVariant.DEFAULT), this.scene.currentBattle.waveIndex << 8);
+      if (newTrainer) {
+        this.scene.field.add(newTrainer);
+      }
+      // this is newBattle
+      // don't trigger a double battle
+
+      this.scene.executeWithSeedOffset(() => {
+
+        this.scene.currentBattle = new Battle(this.scene.gameMode, this.scene.currentBattle.waveIndex, BattleType.TRAINER, newTrainer, false);
+      }, this.scene.currentBattle.waveIndex << 3, this.scene.waveSeed);
+
+    } else {
+      this.scene.executeWithSeedOffset(() => {
+
+        this.scene.currentBattle = new Battle(this.scene.gameMode, this.scene.currentBattle.waveIndex, BattleType.WILD,  null, false);
+      }, this.scene.currentBattle.waveIndex << 3, this.scene.waveSeed);
+
+    }
+    this.scene.resetSeed(this.scene.currentBattle.waveIndex);
+    this.scene.currentBattle.incrementTurn(this.scene);
+
+    this.scene.updateGameInfo();
+
+    this.scene.initSession();
+
+    const loadEnemyAssets = [];
+
+    const battle = this.scene.currentBattle;
+
+    let totalBst = 0;
+
+    battle.enemyLevels.forEach((level, e) => {
+
+      if (battle.battleType === BattleType.TRAINER) {
+        battle.enemyParty[e] = battle.trainer.genPartyMember(e);
+      } else {
+        // add random pokemom
+        let enemySpecies:PokemonSpecies;
+        let meLevel = level;
+        if (selectedEncounter.encounter.pokemonLevel) {
+          meLevel += selectedEncounter.encounter.pokemonLevel;
+        }
+        if (selectedEncounter.encounter.pokemon !== null) {
+          enemySpecies = selectedEncounter.encounter.pokemon;
+
+        } else {
+          enemySpecies = this.scene.randomSpecies(battle.waveIndex, level, true);
+
+        }
+        battle.enemyParty[e] = this.scene.addEnemyPokemon(enemySpecies, meLevel, TrainerSlot.NONE, !!this.scene.getEncounterBossSegments(battle.waveIndex, level, enemySpecies));
+        if (this.scene.currentBattle.battleSpec === BattleSpec.FINAL_BOSS) {
+          battle.enemyParty[e].ivs = new Array(6).fill(31);
+        }
+        this.scene.getParty().slice(0, !battle.double ? 1 : 2).reverse().forEach(playerPokemon => {
+          applyAbAttrs(SyncEncounterNatureAbAttr, playerPokemon, null, battle.enemyParty[e]);
+        });
+      }
+
+      const enemyPokemon = this.scene.getEnemyParty()[e];
+      if (e < (battle.double ? 2 : 1)) {
+        enemyPokemon.setX(-66 + enemyPokemon.getFieldPositionOffset()[0]);
+        enemyPokemon.resetSummonData();
+      }
+      //this.scene.gameData.setPokemonSeen(enemyPokemon, true, battle.battleType === BattleType.TRAINER);
+
+
+      totalBst += enemyPokemon.getSpeciesForm().baseTotal;
+
+      console.log(enemyPokemon);
+      loadEnemyAssets.push(enemyPokemon.loadAssets());
+
+      console.log(enemyPokemon.name, enemyPokemon.species.speciesId, enemyPokemon.stats);
+    });
+
+    if (battle.battleType === BattleType.TRAINER) {
+      loadEnemyAssets.push(battle.trainer.loadAssets().then(() => battle.trainer.initSprite()));
+    } else {
+      if (battle.enemyParty.filter(p => p.isBoss()).length > 1) {
+        for (const enemyPokemon of battle.enemyParty) {
+          if (enemyPokemon.isBoss()) {
+            enemyPokemon.setBoss(true, Math.ceil(enemyPokemon.bossSegments * (enemyPokemon.getSpeciesForm().baseTotal / totalBst)));
+            enemyPokemon.initBattleInfo();
+          }
+        }
+      }
+    }
+
+    Promise.all(loadEnemyAssets).then(() => {
+      battle.enemyParty.forEach((enemyPokemon, e) => {
+        if (e < (battle.double ? 2 : 1)) {
+          if (battle.battleType === BattleType.WILD) {
+            this.scene.field.add(enemyPokemon);
+            battle.seenEnemyPartyMemberIds.add(enemyPokemon.id);
+            const playerPokemon = this.scene.getPlayerPokemon();
+            if (playerPokemon?.visible) {
+              this.scene.field.moveBelow(enemyPokemon as Pokemon, playerPokemon);
+            }
+            enemyPokemon.tint(0, 0.5);
+          } else if (battle.battleType === BattleType.TRAINER) {
+            enemyPokemon.setVisible(false);
+            this.scene.currentBattle.trainer.tint(0, 0.5);
+          }
+          if (battle.double) {
+            enemyPokemon.setFieldPosition(e ? FieldPosition.RIGHT : FieldPosition.LEFT);
+          }
+        }
+      });
+      regenerateModifierPoolThresholds(this.scene.getEnemyField(), battle.battleType === BattleType.TRAINER ? ModifierPoolType.TRAINER : ModifierPoolType.WILD);
+      this.scene.generateEnemyModifiers();
+    });
+
+  }
+
+  seeIfMeetsRequirements(reqs:EventRequirements, pokemonFoundForEvent:PlayerPokemon[],
+    additionalPokemonForEvent:PlayerPokemon[], protagOrSupportMeetsReqs):QueriedEventData {
+    let modifierFound = true;
+
+    let timeOfDayCorrect = true;
+
+    // PTS TODO: filter out possibilities based on if you've seen it before
+    // filter out if you can't find modifiers
+    if (reqs.modifier && reqs.modifier.length !== 0) {
+      modifierFound = false;
+      for (const modifier of reqs.modifier) {
+        const foundModifier = this.scene.findModifier(m => m instanceof modifier);
+        if (foundModifier) {
+          modifierFound = true;
+        }
+      }
+    }
+    const tod = this.scene.arena.getTimeOfDay();
+
+    if (reqs.timeOfDay && reqs.timeOfDay.length !== 0 && modifierFound) {
+      timeOfDayCorrect = false;
+      for (const times of reqs.timeOfDay) {
+        if (tod === times) {
+          timeOfDayCorrect = true;
+        }
+      }
+    }
+
+    let defaultNumberOfQualifyingPokemonRequired = 1;
+    let defaultNumberOfAdditionalPokemonRequired = 1;
+
+    if (protagOrSupportMeetsReqs && (reqs.pokemonQuery && reqs.additionalQuery )) {
+      // tricky; if we're trying to filter out Options (instead of finding qualifying pokemon)
+      // we are gonna use an OR operator, which means we want to default this to be empty if nothing is defined.
+      // that means it'll auto fail and the secret option won't show up unless one of the two conditions are met
+
+
+      if (!reqs.pokemonQuery || Object.keys(reqs.pokemonQuery).length === 0 ) {
+        pokemonFoundForEvent = [];
+      }
+
+      if (!reqs.additionalQuery || Object.keys(reqs.additionalQuery).length === 0) {
+        additionalPokemonForEvent = [];
+      }
+    }
+
+    if (reqs.pokemonQuery && modifierFound && timeOfDayCorrect)  {
+      pokemonFoundForEvent = this.filterPartyWithQuery(reqs.pokemonQuery, pokemonFoundForEvent);
+
+      if (reqs.pokemonQuery.numberOfQualifyingPokemonRequired && reqs.pokemonQuery.numberOfQualifyingPokemonRequired !== -1) {
+        defaultNumberOfQualifyingPokemonRequired = reqs.pokemonQuery.numberOfQualifyingPokemonRequired;
+      }
+    }
+
+    if (reqs.additionalQuery)  {
+      additionalPokemonForEvent = this.filterPartyWithQuery(reqs.additionalQuery, additionalPokemonForEvent);
+      if (reqs.additionalQuery.numberOfQualifyingPokemonRequired && reqs.additionalQuery.numberOfQualifyingPokemonRequired !== -1) {
+        defaultNumberOfAdditionalPokemonRequired = reqs.pokemonQuery.numberOfQualifyingPokemonRequired;
+      }
+    }
+
+    if (protagOrSupportMeetsReqs) {
+      console.log("Option eliminator");
+      console.log(pokemonFoundForEvent.length >= defaultNumberOfQualifyingPokemonRequired);
+      console.log(additionalPokemonForEvent.length >= defaultNumberOfAdditionalPokemonRequired);
+      // Basically if we want an option to be available if the queried pokemon OR another party member meets requirements
+      return {
+        reqsMet: (modifierFound && (pokemonFoundForEvent.length >= defaultNumberOfQualifyingPokemonRequired
+        || additionalPokemonForEvent.length >= defaultNumberOfAdditionalPokemonRequired) && timeOfDayCorrect),
+        qualifiedProtagonists: pokemonFoundForEvent,
+        supports: additionalPokemonForEvent
+      };
+    } else {
+      console.log("Query for pokemon");
+      console.log(pokemonFoundForEvent);
+      console.log(additionalPokemonForEvent);
+      return {
+        reqsMet: (modifierFound && pokemonFoundForEvent.length >= defaultNumberOfQualifyingPokemonRequired
+        && additionalPokemonForEvent.length >= defaultNumberOfAdditionalPokemonRequired && timeOfDayCorrect),
+        qualifiedProtagonists: pokemonFoundForEvent,
+        supports: additionalPokemonForEvent
+      };
+    }
+
+  }
+
+  filterPartyWithQuery(q:PokemonQuery, party:PlayerPokemon[]) {
+    const pokemonFoundForEvent: PlayerPokemon[] = [];
+    for (const pokemon of party) {
+      pokemonFoundForEvent.push(pokemon);
+    }
+
+    // use this to mark indices for deletion for the party of pokemon that failed the query
+    const spliceIndex = [];
+
+    if (q.abilities && q.abilities.length > 0) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        let abilityFound = false;
+        for (const ability of q.abilities) {
+          if (pokemon.hasAbility(ability)) {
+            abilityFound = true;
+          }
+        }
+        if (!abilityFound) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.moves && q.moves.length > 0) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        let moveFound = false;
+        for (const move of pokemon.moveset) {
+          if (q.moves.includes(move.moveId)) {
+            moveFound = true;
+          }
+        }
+        if (!moveFound) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.type && q.type.length > 0) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        let typeFound = false;
+        for (const typez of q.type) {
+          if (pokemon.isOfType(typez)) {
+            typeFound = true;
+          }
+        }
+        if (!typeFound) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.nature && q.nature.length > 0) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        let natureFound = false;
+        for (const nat of q.nature) {
+          if (pokemon.getNature() === nat) {
+            natureFound = true;
+          }
+        }
+        if (!natureFound) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.species && q.species.length > 0) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        let speciFound = false;
+        for (const speci of q.species) {
+          if (pokemon.species.speciesId === speci) {
+            speciFound = true;
+          }
+        }
+        if (!speciFound) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.canEvoWithItems && q.canEvoWithItems.length > 0) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        let evoAbleFound = false;
+        for (const evolutionItem of q.canEvoWithItems) {
+          if (pokemonEvolutions.hasOwnProperty(pokemon.species.speciesId) && pokemonEvolutions[pokemon.species.speciesId].filter(e => e.item === evolutionItem
+            && (!e.condition || e.condition.predicate(pokemon))).length && (pokemon.getFormKey() !== SpeciesFormKey.GIGANTAMAX)) {
+            evoAbleFound = true;
+          } else if (pokemon.isFusion() && pokemonEvolutions.hasOwnProperty(pokemon.fusionSpecies.speciesId) && pokemonEvolutions[pokemon.fusionSpecies.speciesId].filter(e => e.item === evolutionItem
+          && (!e.condition || e.condition.predicate(pokemon))).length && (pokemon.getFusionFormKey() !== SpeciesFormKey.GIGANTAMAX)) {
+            evoAbleFound = true;
+          }
+        }
+        if (!evoAbleFound) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+
+    if (q.canFormChangeWithItems && q.canFormChangeWithItems.length > 0) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        let formAbleFound = false;
+        for (const formChangeItem of q.canFormChangeWithItems) {
+          if (pokemonFormChanges.hasOwnProperty(pokemon.species.speciesId)
+          // Get all form changes for this species with an item trigger, including any compound triggers
+          && pokemonFormChanges[pokemon.species.speciesId].filter(fc => fc.trigger.hasTriggerType(SpeciesFormChangeItemTrigger))
+          // Returns true if any form changes match this item
+            .map(fc => fc.findTrigger(SpeciesFormChangeItemTrigger) as SpeciesFormChangeItemTrigger)
+            .flat().flatMap(fc => fc.item).includes(formChangeItem))  {
+            formAbleFound = true;
+          }
+        }
+        if (!formAbleFound) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.maxFriendship && q.maxFriendship !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.friendship > q.maxFriendship) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.minFriendship && q.minFriendship !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.friendship < q.minFriendship) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.minLevel && q.minLevel !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.level < q.minLevel) {
+          spliceIndex.push(index);
+        }
+      }
+
+    }
+    if (q.maxLevel && q.maxLevel !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.level > q.maxLevel) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.minWeight && q.minWeight !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.getWeight() < q.minWeight) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.maxWeight && q.maxWeight !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.getWeight() > q.maxWeight) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.maxWeight && q.maxWeight !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.getWeight() > q.maxWeight) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+    if (q.minHpRatio && q.minHpRatio !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.getHpRatio(true) < q.minHpRatio) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+    if (q.maxHPRatio && q.maxHPRatio !== -1) {
+      for (let index = 0; index < party.length; index++) {
+        const pokemon = party[index];
+        if (pokemon.getHpRatio(true) > q.maxHPRatio) {
+          spliceIndex.push(index);
+        }
+      }
+    }
+
+
+    // disqualify all the other pokemon aside from slot 0
+    if (q.requiresLead) {
+      for (let index = 1; index < party.length; index++) {
+        const pokemon = party[index];
+        if (!pokemon.isActive()) {
+          spliceIndex.push (index);
+        }
+      }
+    }
+
+
+    // remove the pokemon marked for deletion
+    for (let index = pokemonFoundForEvent.length -1; index >= 0; index--) {
+      if (spliceIndex.includes(index)) {
+        pokemonFoundForEvent.splice(index, 1);
+      }
+    }
+    console.log("Post Splice:");
+    console.log(pokemonFoundForEvent);
+    return pokemonFoundForEvent;
+
+  }
+
+  // this does have to happen after assets are loaded so put it in a callback
+  doEncounterCommon(showEncounterMessage: boolean = true, battle: boolean=false) {
+  // PTS TODO: Need different behavior if pokemon was recalled in prep for battle or new biome or coming from a double battle
+    const enemyField = this.scene.getEnemyField();
+
+    if (this.scene.currentBattle.battleType === BattleType.WILD) {
+      enemyField.forEach(enemyPokemon => {
+        enemyPokemon.untint(100, "Sine.easeOut");
+
+        enemyPokemon.cry();
+        enemyPokemon.showInfo();
+        if (enemyPokemon.isShiny()) {
+          this.scene.validateAchv(achvs.SEE_SHINY);
+        }
+      });
+      this.scene.updateFieldScale();
+      if (showEncounterMessage) {
+        this.scene.ui.showText(this.getEncounterMessage(), null, () => this.end(), 1500);
+      }
+
+    } else if (this.scene.currentBattle.battleType === BattleType.TRAINER) {
+      const trainer = this.scene.currentBattle.trainer;
+      trainer.untint(100, "Sine.easeOut");
+      trainer.playAnim();
+
+    }
+  }
+
+  summonTrainerPokemon(showEncounterMessage:boolean = false, trainer:Trainer) {
+    const encounterMessages = this.scene.currentBattle.trainer.getEncounterMessages();
+    const doSummon = () => {
+      this.scene.currentBattle.started = true;
+      this.scene.playBgm(undefined);
+      //this.scene.pbTray.showPbTray(this.scene.getParty());
+      this.scene.pbTrayEnemy.showPbTray(this.scene.getEnemyParty());
+
+      const doTrainerSummon = () => {
+        this.hideEnemyTrainer();
+        const availablePartyMembers = this.scene.getEnemyParty().filter(p => !p.isFainted()).length;
+        this.scene.unshiftPhase(new SummonPhase(this.scene, 0, false));
+        if (this.scene.currentBattle.double && availablePartyMembers > 1) {
+          this.scene.unshiftPhase(new SummonPhase(this.scene, 1, false));
+        }
+      };
+      if (showEncounterMessage) {
+        this.scene.ui.showText(this.getEncounterMessage(), null, doTrainerSummon, 1500, true);
+      } else {
+        doTrainerSummon();
+      }
+    };
+    // if there's only one msg to choose from
+    if (!encounterMessages?.length) {
+      doSummon();
+    } else {
+      // if there are multiple messages to choose
+      const showDialogueAndSummon = () => {
+        let message: string;
+        this.scene.executeWithSeedOffset(() => message = Utils.randSeedItem(encounterMessages), this.scene.currentBattle.waveIndex);
+        if (showEncounterMessage) {
+          this.scene.ui.showDialogue(message, trainer.getName(TrainerSlot.NONE,true), null, () => {
+            this.scene.charSprite.hide().then(() => this.scene.hideFieldOverlay(250).then(() => doSummon()));
+          });
+        } else {
+          this.scene.charSprite.hide().then(() => this.scene.hideFieldOverlay(250).then(() => doSummon()));
+        }
+
+      };
+
+      // major char sprite basically rival on big screen
+      // show dialogue and summon really fucks it all up, so only do that if we wanna fight
+
+      if (this.scene.currentBattle.trainer.config.hasCharSprite) {
+        this.scene.showFieldOverlay(500).then(() => this.scene.charSprite.showCharacter(trainer.getKey(), getCharVariantFromDialogue(encounterMessages[0])).then(() => showDialogueAndSummon()));
+      } else {
+        showDialogueAndSummon();
+      }
+    }
+
+  }
+
+  getEncounterMessage(): string {
+    const enemyField = this.scene.getEnemyField();
+
+    if (this.scene.currentBattle.battleSpec === BattleSpec.FINAL_BOSS) {
+      return i18next.t("battle:bossAppeared", {bossName: enemyField[0].name});
+    }
+
+    if (this.scene.currentBattle.battleType === BattleType.TRAINER) {
+      if (this.scene.currentBattle.double) {
+        return i18next.t("battle:trainerAppearedDouble", {trainerName: this.scene.currentBattle.trainer.getName(TrainerSlot.NONE, true)});
+
+      } else {
+        return i18next.t("battle:trainerAppeared", {trainerName: this.scene.currentBattle.trainer.getName(TrainerSlot.NONE, true)});
+      }
+    }
+
+    return enemyField.length === 1
+      ? i18next.t("battle:singleWildAppeared", {pokemonName: enemyField[0].name})
+      : i18next.t("battle:multiWildAppeared", {pokemonName1: enemyField[0].name, pokemonName2: enemyField[1].name});
+  }
+
+
+  transitionToBattle() {
+
+    const enemyField = this.scene.getEnemyField();
+
+    enemyField.forEach((enemyPokemon, e) => {
+      if (enemyPokemon.isShiny()) {
+        this.scene.unshiftPhase(new ShinySparklePhase(this.scene, BattlerIndex.ENEMY + e));
+      }
+    });
+
+    if (this.scene.currentBattle.battleType !== BattleType.TRAINER) {
+      enemyField.map(p => this.scene.pushPhase(new PostSummonPhase(this.scene, p.getBattlerIndex())));
+      const ivScannerModifier = this.scene.findModifier(m => m instanceof IvScannerModifier);
+      if (ivScannerModifier) {
+        enemyField.map(p => this.scene.pushPhase(new ScanIvsPhase(this.scene, p.getBattlerIndex(), Math.min(ivScannerModifier.getStackCount() * 2, 6))));
+      }
+    }
+
+
+    const availablePartyMembers = this.scene.getParty().filter(p => !p.isFainted());
+
+    if (!availablePartyMembers[0].isOnField()) {
+      this.scene.pushPhase(new SummonPhase(this.scene, 0));
+    }
+
+    if (this.scene.currentBattle.double) {
+      if (availablePartyMembers.length > 1) {
+        this.scene.pushPhase(new ToggleDoublePositionPhase(this.scene, true));
+        if (!availablePartyMembers[1].isOnField()) {
+          this.scene.pushPhase(new SummonPhase(this.scene, 1));
+        }
+      }
+    } else {
+      if (availablePartyMembers.length > 1 && availablePartyMembers[1].isOnField()) {
+        this.scene.pushPhase(new ReturnPhase(this.scene, 1));
+      }
+      this.scene.pushPhase(new ToggleDoublePositionPhase(this.scene, false));
+    }
+
+    if (this.scene.currentBattle.battleType !== BattleType.TRAINER && (this.scene.currentBattle.waveIndex > 1 || !this.scene.gameMode.isDaily)) {
+      const minPartySize = this.scene.currentBattle.double ? 2 : 1;
+      if (availablePartyMembers.length > minPartySize) {
+        this.scene.pushPhase(new CheckSwitchPhase(this.scene, 0, this.scene.currentBattle.double));
+        if (this.scene.currentBattle.double) {
+          this.scene.pushPhase(new CheckSwitchPhase(this.scene, 1, this.scene.currentBattle.double));
+        }
+      }
+    }
+
+  }
+}
+
+
+
 
 export class GameOverPhase extends BattlePhase {
   private victory: boolean;

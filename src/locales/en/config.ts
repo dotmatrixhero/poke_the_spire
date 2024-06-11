@@ -35,6 +35,7 @@ import { starterSelectUiHandler } from "./starter-select-ui-handler";
 import { titles, trainerClasses, trainerNames } from "./trainers";
 import { tutorial } from "./tutorial";
 import { voucher } from "./voucher";
+import { nonBattleEncounter } from "./non-battle-encounter";
 import { weather } from "./weather";
 import { partyUiHandler } from "./party-ui-handler";
 
@@ -65,6 +66,7 @@ export const enConfig = {
   modifierType: modifierType,
   move: move,
   nature: nature,
+  nonBattleEncounter: nonBattleEncounter,
   pokeball: pokeball,
   pokemon: pokemon,
   pokemonInfo: pokemonInfo,
